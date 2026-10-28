@@ -8,4 +8,5 @@ namespace SendFiles.Core;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(AppSettings))]
+[JsonSerializable(typeof(SendFiles.Core.Devices.DeviceFile))]
 internal sealed partial class CoreJsonContext : JsonSerializerContext;
