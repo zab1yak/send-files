@@ -12,7 +12,9 @@ namespace SendFiles.Core.Hosting;
 public sealed class SingleInstance : IDisposable
 {
     public static readonly TimeSpan BatchWindow = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(2);
     private const int MaxMessageBytes = 64 * 1024;
+    private const int MaxBatchItems = 1000;
 
     private readonly Mutex _mutex;
     private readonly string _pipeName;
@@ -20,6 +22,7 @@ public sealed class SingleInstance : IDisposable
     private readonly Lock _batchGate = new();
     private readonly List<string> _batch = [];
     private Timer? _batchTimer;
+    private bool _disposed;
 
     private SingleInstance(Mutex mutex, string pipeName)
     {
@@ -81,9 +84,14 @@ public sealed class SingleInstance : IDisposable
     public void Dispose()
     {
         _stop.Cancel();
-        _batchTimer?.Dispose();
+        lock (_batchGate)
+        {
+            _disposed = true;
+            _batchTimer?.Dispose();
+        }
+
         _mutex.Dispose();
-        _stop.Dispose();
+        // _stop is not disposed: the listener task may still observe its token while unwinding.
     }
 
     private async Task ListenLoopAsync()
@@ -96,43 +104,61 @@ public sealed class SingleInstance : IDisposable
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await server.WaitForConnectionAsync(_stop.Token).ConfigureAwait(false);
 
-                using var buffer = new MemoryStream();
-                var chunk = new byte[4096];
-                int read;
-                while ((read = await server.ReadAsync(chunk, _stop.Token).ConfigureAwait(false)) > 0)
+                // A client that connects and never writes must not block later launches.
+                using var perConnection = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+                perConnection.CancelAfter(ReadTimeout);
+                var message = await ReadMessageAsync(server, perConnection.Token).ConfigureAwait(false);
+                if (message is not null)
                 {
-                    buffer.Write(chunk, 0, read);
-                    if (buffer.Length > MaxMessageBytes)
-                    {
-                        break;
-                    }
-                }
-
-                if (buffer.Length is > 0 and <= MaxMessageBytes)
-                {
-                    Enqueue(Encoding.UTF8.GetString(buffer.ToArray()).Split('\0'));
-                }
-                else if (buffer.Length == 0)
-                {
-                    Enqueue([]); // plain re-launch: just show the window
+                    Enqueue(message.Length == 0 ? [] : message.Split('\0'));
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {
                 return;
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                // Client vanished mid-message; keep listening.
+                // Timed-out or broken client, or the pipe is briefly unavailable: back off and keep listening.
+                try
+                {
+                    await Task.Delay(250, _stop.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
+    }
+
+    private static async Task<string?> ReadMessageAsync(NamedPipeServerStream server, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        int read;
+        while ((read = await server.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+            if (buffer.Length > MaxMessageBytes)
+            {
+                return null;
+            }
+        }
+
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private void Enqueue(IEnumerable<string> args)
     {
         lock (_batchGate)
         {
-            _batch.AddRange(args.Where(a => a.Length > 0));
+            if (_disposed)
+            {
+                return;
+            }
+
+            _batch.AddRange(args.Where(a => a.Length > 0).Take(MaxBatchItems - _batch.Count));
             _batchTimer ??= new Timer(_ => Flush(), null, Timeout.Infinite, Timeout.Infinite);
             _batchTimer.Change(BatchWindow, Timeout.InfiniteTimeSpan);
         }
@@ -143,6 +169,11 @@ public sealed class SingleInstance : IDisposable
         string[] items;
         lock (_batchGate)
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             items = [.. _batch];
             _batch.Clear();
         }

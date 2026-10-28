@@ -30,6 +30,6 @@ public sealed record ServerState(ServerStatus Status, IReadOnlyList<IPAddress> A
     public IReadOnlySet<string> AllowedHosts { get; } =
         Addresses.Select(a => string.Create(CultureInfo.InvariantCulture, $"{a}:{Port}")).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    public bool SameBinding(IReadOnlyList<IPAddress> addresses) =>
-        Status == ServerStatus.Running && Addresses.SequenceEqual(addresses);
+    public bool HasSameAddresses(IReadOnlyList<IPAddress> addresses) =>
+        Addresses.Count == addresses.Count && Addresses.ToHashSet().SetEquals(addresses);
 }

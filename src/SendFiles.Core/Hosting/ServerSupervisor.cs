@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,6 +25,7 @@ public sealed partial class ServerSupervisor : IAsyncDisposable
     private WebApplication? _app;
     private volatile ServerState _state = ServerState.Stopped;
     private int _disposed;
+    private volatile bool _shutdown;
 
     public ServerSupervisor(
         SettingsStore settings,
@@ -47,25 +47,81 @@ public sealed partial class ServerSupervisor : IAsyncDisposable
     /// <summary>Re-reads the network and (re)binds if the address set changed. Safe to call repeatedly.</summary>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
+        if (_shutdown)
+        {
+            return;
+        }
+
+        ServerState? publish = null;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var settings = _settings.Current;
-            var addresses = _addressSource(settings).Distinct().ToList();
-            if (_state.SameBinding(addresses))
+            if (_shutdown)
             {
                 return;
             }
 
+            publish = await RebindAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        Publish(publish);
+    }
+
+    public async Task StopAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
             await StopAppAsync().ConfigureAwait(false);
+            _state = ServerState.Stopped;
+        }
+        finally
+        {
+            _gate.Release();
+        }
 
-            if (addresses.Count == 0)
-            {
-                LogNoNetwork(_logger);
-                Publish(new ServerState(ServerStatus.NoNetwork, [], 0));
-                return;
-            }
+        Publish(ServerState.Stopped);
+    }
 
+    /// <summary>Stops for good: later refreshes (queued or from network events) do nothing.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _shutdown = true;
+        await StopAsync().ConfigureAwait(false);
+        // _gate is not disposed: refreshes queued behind us must still be able to release it.
+    }
+
+    private async Task<ServerState?> RebindAsync(CancellationToken cancellationToken)
+    {
+        var settings = _settings.Current;
+        var addresses = _addressSource(settings).Distinct().ToList();
+
+        if (_state.Status == ServerStatus.Running && _state.Port == settings.Port && _state.HasSameAddresses(addresses))
+        {
+            // Same set, maybe a different best address: update the QR without cutting transfers.
+            return _state.Addresses.SequenceEqual(addresses) ? null : SetState(_state with { Addresses = addresses });
+        }
+
+        await StopAppAsync().ConfigureAwait(false);
+        _state = ServerState.Stopped; // never leave a stale "Running" behind if the restart fails
+
+        if (addresses.Count == 0)
+        {
+            LogNoNetwork(_logger);
+            return SetState(new ServerState(ServerStatus.NoNetwork, [], 0));
+        }
+
+        try
+        {
             var port = PortSelector.Choose(settings.Port, p => PortSelector.IsFree(addresses, p));
             if (port == 0)
             {
@@ -84,48 +140,44 @@ public sealed partial class ServerSupervisor : IAsyncDisposable
             }
 
             _app = app;
-            if (port != settings.Port)
-            {
-                _settings.Update(s => s with { Port = port });
-            }
-
+            RememberPort(settings, port);
             LogListening(_logger, addresses.Count, port);
-            Publish(new ServerState(ServerStatus.Running, addresses, port));
+            return SetState(new ServerState(ServerStatus.Running, addresses, port));
         }
-        catch (Exception ex) when (ex is IOException or SocketException or InvalidOperationException)
+        catch (OperationCanceledException)
+        {
+            SetState(ServerState.Stopped);
+            throw;
+        }
+        catch (Exception ex)
         {
             LogStartFailed(_logger, ex);
-            Publish(new ServerState(ServerStatus.Failed, [], 0, ex.GetType().Name));
-        }
-        finally
-        {
-            _gate.Release();
+            return SetState(new ServerState(ServerStatus.Failed, [], 0, ex.GetType().Name));
         }
     }
 
-    public async Task StopAsync()
+    private void RememberPort(AppSettings settings, int port)
     {
-        await _gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            await StopAppAsync().ConfigureAwait(false);
-            Publish(ServerState.Stopped);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (port == settings.Port)
         {
             return;
         }
 
-        await StopAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        try
+        {
+            _settings.Update(s => s with { Port = port });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The server is running; only the preference for next time is lost.
+            LogSettingsWriteFailed(_logger, ex);
+        }
+    }
+
+    private ServerState SetState(ServerState state)
+    {
+        _state = state;
+        return state;
     }
 
     private WebApplication Build(IReadOnlyList<IPAddress> addresses, int port)
@@ -162,31 +214,43 @@ public sealed partial class ServerSupervisor : IAsyncDisposable
 
     private async Task StopAppAsync()
     {
-        if (_app is null)
+        if (_app is not { } app)
         {
             return;
         }
 
-        using (var timeout = new CancellationTokenSource(StopTimeout))
-        {
-            try
-            {
-                await _app.StopAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Open connections are cut; uploads resume by id.
-            }
-        }
-
-        await _app.DisposeAsync().ConfigureAwait(false);
         _app = null;
+        try
+        {
+            using var timeout = new CancellationTokenSource(StopTimeout);
+            await app.StopAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Open connections are cut; uploads resume by id.
+        }
+        finally
+        {
+            await app.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
-    private void Publish(ServerState state)
+    /// <summary>Raised outside the gate so a subscriber can call back into the supervisor.</summary>
+    private void Publish(ServerState? state)
     {
-        _state = state;
-        StateChanged?.Invoke(this, state);
+        if (state is null)
+        {
+            return;
+        }
+
+        try
+        {
+            StateChanged?.Invoke(this, state);
+        }
+        catch (Exception ex)
+        {
+            LogSubscriberFailed(_logger, ex);
+        }
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Listening on {Count} address(es), port {Port}")]
@@ -194,6 +258,12 @@ public sealed partial class ServerSupervisor : IAsyncDisposable
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "No private Wi-Fi/Ethernet address; server not started")]
     private static partial void LogNoNetwork(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not remember the chosen port")]
+    private static partial void LogSettingsWriteFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Server state subscriber failed")]
+    private static partial void LogSubscriberFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Server failed to start")]
     private static partial void LogStartFailed(ILogger logger, Exception exception);

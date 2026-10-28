@@ -26,6 +26,11 @@ public static class AtomicJsonFile
             Quarantine(path, time ?? TimeProvider.System);
             return fallback();
         }
+        catch (IOException)
+        {
+            // Locked by another process (antivirus, sync client): use defaults, keep the file.
+            return fallback();
+        }
     }
 
     public static void Write<T>(string path, T value, JsonTypeInfo<T> typeInfo)
@@ -34,14 +39,22 @@ public static class AtomicJsonFile
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
         Directory.CreateDirectory(directory);
 
-        var temp = path + ".tmp";
+        var temp = $"{path}.{Guid.NewGuid():N}.tmp";
         using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             JsonSerializer.Serialize(stream, value, typeInfo);
             stream.Flush(flushToDisk: true);
         }
 
-        File.Move(temp, path, overwrite: true);
+        try
+        {
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            File.Delete(temp);
+            throw;
+        }
     }
 
     private static void Quarantine(string path, TimeProvider time)
