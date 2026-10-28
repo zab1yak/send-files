@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName" xml:space="preserve"><value>Send Files</value></data>
+  <data name="Status_Waiting" xml:space="preserve"><value>Waiting for a device…</value></data>
+  <data name="Status_Starting" xml:space="preserve"><value>Starting…</value></data>
+  <data name="Status_NoNetwork" xml:space="preserve"><value>No local network</value></data>
+  <data name="Status_NoNetworkHint" xml:space="preserve"><value>Connect the PC to Wi-Fi or Ethernet — the same network as your phone. No Wi-Fi? Turn on the phone's hotspot and connect the PC to it.</value></data>
+  <data name="Status_Failed" xml:space="preserve"><value>Could not start the server</value></data>
+  <data name="Status_FailedHint" xml:space="preserve"><value>Another program may be using the port. Try again.</value></data>
+  <data name="ScanHint" xml:space="preserve"><value>Point your phone's camera at the code</value></data>
+  <data name="AddressHint" xml:space="preserve"><value>or open in the phone's browser</value></data>
+  <data name="CopyAddress" xml:space="preserve"><value>Copy address</value></data>
+  <data name="Copied" xml:space="preserve"><value>Copied</value></data>
+  <data name="Retry" xml:space="preserve"><value>Try again</value></data>
+  <data name="DropHint" xml:space="preserve"><value>Drop files here to send them to your phone</value></data>
+  <data name="Window_Close" xml:space="preserve"><value>Close to tray</value></data>
+  <data name="Window_Minimize" xml:space="preserve"><value>Minimize</value></data>
+  <data name="Tray_Open" xml:space="preserve"><value>Open Send Files</value></data>
+  <data name="Tray_Quit" xml:space="preserve"><value>Quit</value></data>
+  <data name="Tray_Tooltip" xml:space="preserve"><value>Send Files — {0}</value></data>
+  <data name="Qr_Name" xml:space="preserve"><value>QR code with the connection address</value></data>
+</root>

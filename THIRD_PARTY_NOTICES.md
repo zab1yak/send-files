@@ -6,6 +6,7 @@ Send Files uses the following components. Full license texts are in each project
 |---|---|---|
 | .NET, ASP.NET Core, WPF | MIT | https://github.com/dotnet |
 | CommunityToolkit.Mvvm | MIT | https://github.com/CommunityToolkit/dotnet |
+| Lucide icons (path data) | ISC | https://github.com/lucide-icons/lucide |
 | H.NotifyIcon | MIT | https://github.com/HavenDV/H.NotifyIcon |
 | Microsoft.Toolkit.Uwp.Notifications | MIT | https://github.com/CommunityToolkit/WindowsCommunityToolkit |
 | QRCoder | MIT | https://github.com/codebude/QRCoder |

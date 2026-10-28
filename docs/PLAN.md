@@ -2,17 +2,19 @@
 
 Статусы: ✅ готово · 🔄 в работе · ⬜ не начато. Ручные проверки — в `QA_CHECKLIST.md` (⏳).
 
-## 0. Разведка и репозиторий 🔄
+## 0. Разведка и репозиторий ✅
 - Окружение: .NET SDK 10.0.403, gh 2.103 (zab1yak), Node 22, Playwright 1.64; агенты ECC подключены.
 - План — planner + architect. `.gitignore`, `.editorconfig`, `global.json`, `LICENSE`, README, docs.
 - `gh repo create zab1yak/send-files --public`, первый push.
 
-## 1. Каркас ⬜
+## 1. Каркас ✅
 - Решение `SendFiles.slnx`, central package management, `TreatWarningsAsErrors`, анализаторы.
 - Core: `DataDirectory`, `SettingsStore` (атомарно), `NetworkAdapterSelector` + тесты, `PortSelector`,
   `NetworkChangeMonitor`, `ServerSupervisor`, QR.
 - App: внешний Generic Host, Serilog в папку данных, single-instance (Mutex + pipe, склейка аргументов
   за 300 мс), трей, окно с QR.
+- Перенесено: экран-объяснение брандмауэра до первого `Listen` — в задачу 5 вместе с «Исправить»;
+  папка приёма по умолчанию (`Загрузки\Send Files`) — в задачу 3, где начинается приём.
 - Тесты: адаптеры, порт, настройки (битый JSON → значения по умолчанию), single-instance.
 
 ## 2. Протокол и сопряжение ⬜

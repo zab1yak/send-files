@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SendFiles.App/SendFiles.App.csproj" />
+    <Project Path="src/SendFiles.Core/SendFiles.Core.csproj" />
+    <Project Path="src/SendFiles.Web/SendFiles.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SendFiles.Tests/SendFiles.Tests.csproj" />
+    <Project Path="tests/SendFiles.Web.Tests/SendFiles.Web.Tests.csproj" />
+  </Folder>
+</Solution>
